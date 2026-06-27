@@ -29,5 +29,12 @@ final class StatusItemController {
             NSApp.terminate(nil)
             return
         }
+
+        let menu = NSMenu()
+        newStatusItem.menu = menu
+
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(quitItem)
     }
 }
