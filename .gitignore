@@ -1,0 +1,9 @@
+# Lean starter — grow this only as `git status` shows new machine-generated noise.
+# Canonical reference: https://github.com/github/gitignore/blob/main/Swift.gitignore
+
+# Xcode per-user state (window layouts, breakpoints, snapshots). Lives inside the .xcodeproj;
+# ignoring the xcuserdata/ directory already covers the .xcuserstate file nested inside it.
+xcuserdata/
+
+# macOS Finder metadata
+.DS_Store
