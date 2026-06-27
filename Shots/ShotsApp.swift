@@ -9,9 +9,5 @@ import SwiftUI
 
 @main
 struct ShotsApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
-    }
+    var body: some Scene {}
 }
