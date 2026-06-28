@@ -16,6 +16,7 @@ final class AppCoordinator {
     private let toastController = ToastController()
     private var currentScreenCaptureTarget: ScreenCaptureTarget?
     private var renamePanelController: RenamePanelController?
+    private var detector: ScreenCaptureDetector?
 
     func start() {
         statusItemController.start(
@@ -32,6 +33,22 @@ final class AppCoordinator {
                 self?.renamePanelController = nil
             }
         )
+
+        let captureDetector = ScreenCaptureDetector()
+        captureDetector.onNewScreenshot = { [weak self] url in
+            // We never switch to a new capture while the rename panel is open.
+            // Beyond avoiding interruption mid-rename, this matters for the
+            // common case of screenshots taken back-to-back: keeping the first
+            // one in the panel means renaming the firt one acts as a divider to
+            // show the rest of shots in serieis are after his renamed file.
+            // where the user can pick them in order after finishing the first.
+            // Without this, each new capture would replace the panel and the
+            // user would have to hunt through previews to find where their
+            // series started.
+            guard self?.renamePanelController == nil else { return }
+            self?.openOrSwitchTo(url: url, showPreview: false)
+        }
+        detector = captureDetector
 
         do {
             let monitor = ScreenCaptureTargetMonitor()
@@ -55,8 +72,14 @@ final class AppCoordinator {
                 default: "in"
             }
             toastController.show(message: "Shots: Ready for new screenshots \(preposition) \(url.lastPathComponent)")
+            do {
+                try detector?.startWatching(folder: url)
+            } catch {
+                toastController.show(message: "Shots: Unable to watch for new screenshots: \(error.localizedDescription)")
+            }
         case .nonFolder(let label):
             toastController.show(message: "Shots: \(label) is not a folder. Pausing.")
+            detector?.stop()
         }
     }
 
