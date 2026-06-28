@@ -16,6 +16,7 @@ final class AppCoordinator {
     private let toastController = ToastController()
     private var currentScreenCaptureTarget: ScreenCaptureTarget?
     private var renamePanelController: RenamePanelController?
+    private var previousFrontmostApplication: NSRunningApplication?
     private var detector: ScreenCaptureDetector?
     private var openMenuHotKey: GlobalHotKey?
     private var recentScreenshotHotKeys: [GlobalHotKey] = []
@@ -104,13 +105,40 @@ final class AppCoordinator {
         if let panel = renamePanelController {
             panel.switchToUrl(url, showPreview: showPreview)
         } else {
+            // Capture the frontmost app before activating ourselves, so we can
+            // restore focus when the panel closes — like Spotlight returning you
+            // to where you were. Skip when our app is already frontmost (menu
+            // clicks), since there's nothing to restore to.
+            if let frontApp = NSWorkspace.shared.frontmostApplication,
+               frontApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+                previousFrontmostApplication = frontApp
+            }
+
             let panel = RenamePanelController(fileURL: url, showPreview: showPreview)
             panel.onComplete = { [weak self] in
                 self?.renamePanelController = nil
+                self?.restorePreviousAppFocus()
             }
             panel.showPanel()
             renamePanelController = panel
         }
+    }
+
+    private func restorePreviousAppFocus() {
+        // defer runs when the function exits — no matter which return we take.
+        // We always clear the captured app so it's single-use: it must match
+        // the panel that captured it, not leak into a future close.
+        defer { previousFrontmostApplication = nil }
+
+        guard let app = previousFrontmostApplication, !app.isTerminated else {
+            return
+        }
+
+        // NSRunningApplication.activate() is deprecated in macOS 14 but remains the
+        // reliable way to hand focus to another app. Its replacement,
+        // yieldActivation(to:), depends on the current app's activation semantics
+        // and doesn't work reliably for LSUIElement (menu-bar-only) apps.
+        app.activate()
     }
 
     // MARK: - Hotkeys
