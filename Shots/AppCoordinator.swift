@@ -8,15 +8,6 @@ import AppKit
 // If you're writing HOW something works inside the coordinator, it belongs in a
 // component; the coordinator keeps only WHICH component talks to WHICH, and
 // WHEN. Hold that line and it can never become a God.
-//
-// Its single job is to compose the components (status item, watcher/detector,
-// panel, renamer, trash, toasts, ...) and route events between them - who talks
-// to whom, and when.
-//
-// It holds NO feature logic on purpose. If you're writing HOW something works
-// here (a retry, a query, a validation), move it into the component that owns
-// that concern. Keeping logic out of this file is what stops it from becoming a
-// God object - one responsibility (wiring), not many.
 
 @MainActor
 final class AppCoordinator {
@@ -24,13 +15,13 @@ final class AppCoordinator {
     private var screenCaptureTargetMonitor: ScreenCaptureTargetMonitor?
     private let toastController = ToastController()
     private var currentScreenCaptureTarget: ScreenCaptureTarget?
+    private var renamePanelController: RenamePanelController?
 
     func start() {
         statusItemController.start(
             getCurrentTarget: { [weak self] in self?.currentScreenCaptureTarget },
             onOpenScreenshot: { [weak self] url in
-                // Stub — rename panel comes in the next commit
-                self?.toastController.show(message: "Shots: Rename panel coming soon")
+                self?.openOrSwitchTo(url: url)
             }
         )
 
@@ -50,7 +41,6 @@ final class AppCoordinator {
 
         switch target {
         case .directory(let url):
-            // If Desktop i want to ay "on your" if "Documents" i want to say "in your", else "in".
             let preposition = switch url.lastPathComponent {
                 case "Desktop": "on your"
                 case "Documents": "in your"
@@ -59,6 +49,26 @@ final class AppCoordinator {
             toastController.show(message: "Shots: Ready for new screenshots \(preposition) \(url.lastPathComponent)")
         case .nonFolder(let label):
             toastController.show(message: "Shots: \(label) is not a folder. Pausing.")
+        }
+    }
+
+    // Switches to a screenshot if a panel is already showing, or creates a new one.
+    // No busy check: the only way a panel can be open AND a switch triggered is via
+    // ⌘⌥1-9 global hotkeys (which don't change focus). Menu clicks and ⌘⌥. always
+    // close the panel first (focus loss) before the user can interact with the menu.
+    // So by the time a menu click reaches openOrSwitchTo, the panel is already nil
+    // and we take the create path. Auto-capture (file watcher) checks renamePanelController
+    // == nil before calling this, so it never interrupts an open panel.
+    func openOrSwitchTo(url: URL, showPreview: Bool = true) {
+        if let panel = renamePanelController {
+            panel.switchToUrl(url, showPreview: showPreview)
+        } else {
+            let panel = RenamePanelController(fileURL: url, showPreview: showPreview)
+            panel.onComplete = { [weak self] in
+                self?.renamePanelController = nil
+            }
+            panel.showPanel()
+            renamePanelController = panel
         }
     }
 }
