@@ -6,15 +6,18 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     private var getCurrentTarget: (() -> ScreenCaptureTarget?)?
     private var onOpenScreenshot: ((URL) -> Void)?
     private var onMenuWillOpen: (() -> Void)?
+    private var onMenuDidClose: (() -> Void)?
 
     func start(
         getCurrentTarget: @escaping () -> ScreenCaptureTarget?,
         onOpenScreenshot: @escaping (URL) -> Void,
-        onMenuWillOpen: @escaping () -> Void
+        onMenuWillOpen: @escaping () -> Void,
+        onMenuDidClose: @escaping () -> Void
     ) {
         self.getCurrentTarget = getCurrentTarget
         self.onOpenScreenshot = onOpenScreenshot
         self.onMenuWillOpen = onMenuWillOpen
+        self.onMenuDidClose = onMenuDidClose
 
         let newStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = newStatusItem
@@ -57,6 +60,10 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
 
     // MARK: - Actions
 
+    func openMenu() {
+        statusItem?.button?.performClick(nil)
+    }
+
     @objc private func openScreenshotsFolder() {
         guard case .directory(let url) = getCurrentTarget?() else { return }
         NSWorkspace.shared.open(url)
@@ -84,6 +91,10 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
         onMenuWillOpen?()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        onMenuDidClose?()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

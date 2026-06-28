@@ -17,6 +17,8 @@ final class AppCoordinator {
     private var currentScreenCaptureTarget: ScreenCaptureTarget?
     private var renamePanelController: RenamePanelController?
     private var detector: ScreenCaptureDetector?
+    private var openMenuHotKey: GlobalHotKey?
+    private var recentScreenshotHotKeys: [GlobalHotKey] = []
 
     func start() {
         statusItemController.start(
@@ -31,8 +33,16 @@ final class AppCoordinator {
                 // close it before the menu appears.
                 self?.renamePanelController?.closeWithoutCancel()
                 self?.renamePanelController = nil
+                // Suspend recent-screenshot hotkeys so they don't collide with
+                // the menu's own ⌘⌥1-9 item shortcuts while the menu is open.
+                self?.suspendRecentScreenshotHotkeys()
+            },
+            onMenuDidClose: { [weak self] in
+                self?.resumeRecentScreenshotHotkeys()
             }
         )
+
+        registerHotkeys()
 
         let captureDetector = ScreenCaptureDetector()
         captureDetector.onNewScreenshot = { [weak self] url in
@@ -101,5 +111,54 @@ final class AppCoordinator {
             panel.showPanel()
             renamePanelController = panel
         }
+    }
+
+    // MARK: - Hotkeys
+
+    private func registerHotkeys() {
+        openMenuHotKey = GlobalHotKey(
+            keyCode: GlobalHotKey.KeyCode.period,
+            modifiers: GlobalHotKey.Modifiers.commandOption
+        ) { [weak self] in
+            self?.statusItemController.openMenu()
+        }
+
+        registerRecentScreenshotHotkeys()
+    }
+
+    private func registerRecentScreenshotHotkeys() {
+        recentScreenshotHotKeys = GlobalHotKey.KeyCode.digits.enumerated().map { index, keyCode in
+            GlobalHotKey(keyCode: keyCode, modifiers: GlobalHotKey.Modifiers.commandOption) { [weak self] in
+                self?.openOrSwitchToRecentScreenshot(rank: index + 1)
+            }
+        }
+    }
+
+    private func openOrSwitchToRecentScreenshot(rank: Int) {
+        guard case .directory(let url) = currentScreenCaptureTarget else {
+            toastController.show(message: "Shots: Screenshots are not being saved to a folder.")
+            return
+        }
+
+        guard let screenshots = try? ScreenshotLocator.screenshotURLsSortedByCreatedAtDesc(in: url) else {
+            toastController.show(message: "Shots: Could not search for screenshots.")
+            return
+        }
+
+        let index = rank - 1
+        guard index < screenshots.count else {
+            toastController.show(message: "Shots: No screenshot #\(rank) available in \(url.lastPathComponent).")
+            return
+        }
+
+        openOrSwitchTo(url: screenshots[index], showPreview: true)
+    }
+
+    private func suspendRecentScreenshotHotkeys() {
+        recentScreenshotHotKeys = []
+    }
+
+    private func resumeRecentScreenshotHotkeys() {
+        registerRecentScreenshotHotkeys()
     }
 }
