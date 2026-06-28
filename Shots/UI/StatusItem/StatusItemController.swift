@@ -1,10 +1,13 @@
 import AppKit
 
 @MainActor
-final class StatusItemController {
+final class StatusItemController: NSObject, NSMenuItemValidation {
     private var statusItem: NSStatusItem?
-    
-    func start() {
+    private var getCurrentTarget: (() -> ScreenCaptureTarget?)?
+
+    func start(getCurrentTarget: @escaping () -> ScreenCaptureTarget?) {
+        self.getCurrentTarget = getCurrentTarget
+
         let newStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = newStatusItem
 
@@ -18,7 +21,6 @@ final class StatusItemController {
             accessibilityDescription: "Shots"
         )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 15, weight: .medium))
         if newStatusItem.button!.image == nil {
-            // The selected icon is not supported. Quit.
             let alert = NSAlert()
             alert.alertStyle = .critical
             alert.messageText = "Shots can't start"
@@ -31,10 +33,32 @@ final class StatusItemController {
         }
 
         let menu = NSMenu()
-        newStatusItem.menu = menu
+
+        let openFolderItem = NSMenuItem(title: "Open Screenshots Folder", action: #selector(openScreenshotsFolder), keyEquivalent: "o")
+        openFolderItem.keyEquivalentModifierMask = [.command]
+        openFolderItem.target = self
+        menu.addItem(openFolderItem)
 
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
         menu.addItem(quitItem)
+
+        newStatusItem.menu = menu
+    }
+
+    @objc private func openScreenshotsFolder() {
+        guard case .directory(let url) = getCurrentTarget?() else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    // Called by AppKit before every menu open — return false to disable this item.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(openScreenshotsFolder):
+            guard case .directory = getCurrentTarget?() else { return false }
+            return true
+        default:
+            return true
+        }
     }
 }

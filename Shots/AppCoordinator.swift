@@ -26,7 +26,7 @@ final class AppCoordinator {
     private var currentScreenCaptureTarget: ScreenCaptureTarget?
 
     func start() {
-        statusItemController.start()
+        statusItemController.start(getCurrentTarget: { [weak self] in self?.currentScreenCaptureTarget })
 
         do {
             let monitor = ScreenCaptureTargetMonitor()
