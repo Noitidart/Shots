@@ -22,6 +22,14 @@ final class AppCoordinator {
             getCurrentTarget: { [weak self] in self?.currentScreenCaptureTarget },
             onOpenScreenshot: { [weak self] url in
                 self?.openOrSwitchTo(url: url)
+            },
+            onMenuWillOpen: { [weak self] in
+                // The status menu opening does not reliably cause other windows
+                // in the same app to resign key, so the rename panel can stay
+                // open behind the menu. Explicitly tell the coordinator to
+                // close it before the menu appears.
+                self?.renamePanelController?.closeWithoutCancel()
+                self?.renamePanelController = nil
             }
         )
 

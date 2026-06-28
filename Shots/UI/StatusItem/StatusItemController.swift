@@ -5,13 +5,16 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     private var statusItem: NSStatusItem?
     private var getCurrentTarget: (() -> ScreenCaptureTarget?)?
     private var onOpenScreenshot: ((URL) -> Void)?
+    private var onMenuWillOpen: (() -> Void)?
 
     func start(
         getCurrentTarget: @escaping () -> ScreenCaptureTarget?,
-        onOpenScreenshot: @escaping (URL) -> Void
+        onOpenScreenshot: @escaping (URL) -> Void,
+        onMenuWillOpen: @escaping () -> Void
     ) {
         self.getCurrentTarget = getCurrentTarget
         self.onOpenScreenshot = onOpenScreenshot
+        self.onMenuWillOpen = onMenuWillOpen
 
         let newStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = newStatusItem
@@ -78,6 +81,10 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     }
 
     // MARK: - Menu Delegate
+
+    func menuWillOpen(_ menu: NSMenu) {
+        onMenuWillOpen?()
+    }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         removeRecentSectionItems(from: menu)
