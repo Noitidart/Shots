@@ -40,6 +40,12 @@ final class AppCoordinator {
             },
             onMenuDidClose: { [weak self] in
                 self?.resumeRecentScreenshotHotkeys()
+            },
+            // Route toasts through the coordinator's ToastController so they
+            // stack with the app's other toasts (readiness, target changes,
+            // errors) instead of overlapping a separate stack.
+            showToast: { [weak self] message in
+                self?.toastController.show(message: message)
             }
         )
 

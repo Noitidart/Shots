@@ -7,17 +7,20 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     private var onOpenScreenshot: ((URL) -> Void)?
     private var onMenuWillOpen: (() -> Void)?
     private var onMenuDidClose: (() -> Void)?
+    private var showToast: ((String) -> Void)?
 
     func start(
         getCurrentTarget: @escaping () -> ScreenCaptureTarget?,
         onOpenScreenshot: @escaping (URL) -> Void,
         onMenuWillOpen: @escaping () -> Void,
-        onMenuDidClose: @escaping () -> Void
+        onMenuDidClose: @escaping () -> Void,
+        showToast: @escaping (String) -> Void
     ) {
         self.getCurrentTarget = getCurrentTarget
         self.onOpenScreenshot = onOpenScreenshot
         self.onMenuWillOpen = onMenuWillOpen
         self.onMenuDidClose = onMenuDidClose
+        self.showToast = showToast
 
         let newStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = newStatusItem
@@ -46,10 +49,32 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         let menu = NSMenu()
         menu.delegate = self
 
+        // MARK: - Folder related menu items
+
         let openFolderItem = NSMenuItem(title: "Open Screenshots Folder", action: #selector(openScreenshotsFolder), keyEquivalent: "o")
         openFolderItem.keyEquivalentModifierMask = [.command]
         openFolderItem.target = self
         menu.addItem(openFolderItem)
+
+        // Ordered safest-first: ⌘T is permanently bound to the safest scope (14+ days).
+        // If a safer scope is ever added, the shortcut must move to it.
+        let trashTwoWeeks = NSMenuItem(title: "Trash Very Old Screenshots (14+ days)", action: #selector(trashScreenshotsWithToast(_:)), keyEquivalent: "t")
+        menu.addItem(trashTwoWeeks)
+        trashTwoWeeks.keyEquivalentModifierMask = [.command]
+        trashTwoWeeks.target = self
+        trashTwoWeeks.representedObject = ScreenshotTrashScope.old(minimumAgeInHours: 336, ageDescription: "14 days")
+
+        let trashOneDay = NSMenuItem(title: "Trash Old Screenshots (24+ hours)", action: #selector(trashScreenshotsWithToast(_:)), keyEquivalent: "")
+        menu.addItem(trashOneDay)
+        trashOneDay.target = self
+        trashOneDay.representedObject = ScreenshotTrashScope.old(minimumAgeInHours: 24, ageDescription: "24 hours")
+
+        let trashAll = NSMenuItem(title: "Trash All Screenshots", action: #selector(trashScreenshotsWithToast(_:)), keyEquivalent: "")
+        menu.addItem(trashAll)
+        trashAll.target = self
+        trashAll.representedObject = ScreenshotTrashScope.all
+
+        menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
@@ -74,12 +99,36 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         onOpenScreenshot?(url)
     }
 
+    @objc private func trashScreenshotsWithToast(_ sender: NSMenuItem) {
+        guard let scope = sender.representedObject as? ScreenshotTrashScope else {
+            fatalError("dev-error: scope was nil or wrong type, but menu items always set it to a ScreenshotTrashScope at creation so dev set wrong representedObject")
+        }
+
+        guard case .directory(let url) = getCurrentTarget?() else {
+            fatalError("dev-error: target is not a folder, but validateMenuItem disables trash items when it isn't so this should have never got called")
+        }
+
+        let folderName = url.lastPathComponent
+
+        ScreenshotTrasher.trashScreenshots(in: url, scope: scope) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(0):
+                self.showToast?("Shots: \(scope.emptyMessage(in: folderName))")
+            case .success(let count):
+                self.showToast?("Shots: \(scope.successMessage(count: count, in: folderName))")
+            case .failure(let error):
+                self.showToast?("Shots: \(error.localizedDescription)")
+            }
+        }
+    }
+
     // MARK: - Menu Validation
 
     // Called by AppKit before every menu open — return false to disable this item.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
-        case #selector(openScreenshotsFolder):
+        case #selector(openScreenshotsFolder), #selector(trashScreenshotsWithToast(_:)):
             guard case .directory = getCurrentTarget?() else { return false }
             return true
         default:
