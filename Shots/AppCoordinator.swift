@@ -26,7 +26,13 @@ final class AppCoordinator {
     private var currentScreenCaptureTarget: ScreenCaptureTarget?
 
     func start() {
-        statusItemController.start(getCurrentTarget: { [weak self] in self?.currentScreenCaptureTarget })
+        statusItemController.start(
+            getCurrentTarget: { [weak self] in self?.currentScreenCaptureTarget },
+            onOpenScreenshot: { [weak self] url in
+                // Stub — rename panel comes in the next commit
+                self?.toastController.show(message: "Shots: Rename panel coming soon")
+            }
+        )
 
         do {
             let monitor = ScreenCaptureTargetMonitor()
