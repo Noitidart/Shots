@@ -339,7 +339,8 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     private func copyPathToClipboard(_ path: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(path, forType: .string)
+        let stringToCopy = AppPreferences.wrapCopiedPathsInSingleQuotes ? "'\(path)'" : path
+        pasteboard.setString(stringToCopy, forType: .string)
     }
 
     private func showError(_ error: Error) {

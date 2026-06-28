@@ -49,6 +49,15 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         let menu = NSMenu()
         menu.delegate = self
 
+        // MARK: - Preferences related menu items
+
+        let quotePathsItem = NSMenuItem(title: "Quote Copied Paths (CLI Friendly)", action: #selector(toggleQuotePaths(_:)), keyEquivalent: "")
+        quotePathsItem.target = self
+        quotePathsItem.state = AppPreferences.wrapCopiedPathsInSingleQuotes ? .on : .off
+        menu.addItem(quotePathsItem)
+
+        menu.addItem(.separator())
+
         // MARK: - Folder related menu items
 
         let openFolderItem = NSMenuItem(title: "Open Screenshots Folder", action: #selector(openScreenshotsFolder), keyEquivalent: "o")
@@ -121,6 +130,12 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
                 self.showToast?("Shots: \(error.localizedDescription)")
             }
         }
+    }
+
+    @objc private func toggleQuotePaths(_ sender: NSMenuItem) {
+        let newValue = sender.state != .on
+        AppPreferences.wrapCopiedPathsInSingleQuotes = newValue
+        sender.state = newValue ? .on : .off
     }
 
     // MARK: - Menu Validation
