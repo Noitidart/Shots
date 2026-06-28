@@ -56,6 +56,11 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         quotePathsItem.state = AppPreferences.wrapCopiedPathsInSingleQuotes ? .on : .off
         menu.addItem(quotePathsItem)
 
+        let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        launchAtLoginItem.target = self
+        launchAtLoginItem.state = LaunchAtLoginController.isEnabled ? .on : .off
+        menu.addItem(launchAtLoginItem)
+
         menu.addItem(.separator())
 
         // MARK: - Folder related menu items
@@ -136,6 +141,20 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         let newValue = sender.state != .on
         AppPreferences.wrapCopiedPathsInSingleQuotes = newValue
         sender.state = newValue ? .on : .off
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let newValue = sender.state != .on
+        let success = newValue ? LaunchAtLoginController.enable() : LaunchAtLoginController.disable()
+
+        // Update the checkmark only if the registration actually succeeded.
+        // If it failed (e.g. user denied in System Settings), the old state stays
+        // so the checkmark reflects reality, not what the user tried to do.
+        if success {
+            sender.state = newValue ? .on : .off
+        } else {
+            showToast?("Shots: Could not change launch at login. Check System Settings → General → Login Items.")
+        }
     }
 
     // MARK: - Menu Validation
