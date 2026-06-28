@@ -25,6 +25,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     private let conflictHelperText = "This name already exists, choose a new name, or press Enter again to auto-suffix"
     private var allowsFocusLossDismissal = true
     private var isBusy = false
+    private var pendingAutoSuffixBaseName: String?
 
     init(fileURL: URL, showPreview: Bool = false) {
         self.fileURL = fileURL
@@ -226,6 +227,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         helperLabel.stringValue = idleHelperText
         helperLabel.textColor = .secondaryLabelColor
         allowsFocusLossDismissal = true
+        pendingAutoSuffixBaseName = nil
         selectAllText()
 
         // TODO: swap preview image when showPreview is true and preview system is wired
@@ -275,18 +277,78 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     // MARK: - Rename Flow
 
     private func handleSubmit() {
-        let proposedName = textField.stringValue
-        let originalName = fileURL.deletingPathExtension().lastPathComponent
+        do {
+            let proposedName = try FileSystem.validateName(textField.stringValue)
+            let originalURL = fileURL
+            let originalName = originalURL.deletingPathExtension().lastPathComponent
 
-        if proposedName == originalName {
-            // Same name — no rename needed, just copy the path.
-            // TODO: copy fileURL.path to clipboard (inline method, later commit)
-        } else {
-            // Different name — rename needed.
-            // TODO: wire to FileSystem.renameSafely (next commit)
+            // Same name — no rename needed, just copy the existing path.
+            if proposedName == originalName {
+                copyPathToClipboard(originalURL.path)
+                dismissAfterSuccess()
+                return
+            }
+
+            // Determine target URL. If the last submit with this same name caused a
+            // conflict, auto-suffix ("name 2.png", "name 3.png"…).
+            let targetURL: URL
+            if pendingAutoSuffixBaseName == proposedName {
+                targetURL = FileSystem.autoSuffixedURL(from: originalURL, baseName: proposedName)
+                pendingAutoSuffixBaseName = nil
+            } else {
+                pendingAutoSuffixBaseName = nil
+                targetURL = FileSystem.targetURL(from: originalURL, baseName: proposedName)
+            }
+
+            // Optimistic clipboard copy — put the new path on the clipboard before
+            // renaming so the user can paste immediately. If the rename fails, the
+            // clipboard is restored to the original path.
+            copyPathToClipboard(targetURL.path)
+            setBusy(true)
+
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await FileSystem.renameSafely(from: originalURL, to: targetURL)
+                    guard self.fileURL == originalURL else { return } // panel switched — skip
+                    self.dismissAfterSuccess()
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // Always restore clipboard on failure, even if the panel switched
+                    // to a different file — the clipboard shouldn't keep a stale wrong path.
+                    self.copyPathToClipboard(originalURL.path)
+
+                    guard self.fileURL == originalURL else { return }
+                    self.setBusy(false)
+
+                    if case RenameFailure.destinationAlreadyExists = error {
+                        self.pendingAutoSuffixBaseName = proposedName
+                        self.showNameConflict()
+                    } else {
+                        self.selectAllText()
+                        self.showError(error)
+                    }
+                    }
+                }
+            } catch {
+            showError(error)
         }
+    }
 
-        dismissAfterSuccess()
+    private func copyPathToClipboard(_ path: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(path, forType: .string)
+    }
+
+    private func showError(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Rename Failed"
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     // MARK: - Window Delegate
@@ -328,6 +390,8 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
             helperLabel.stringValue = idleHelperText
             helperLabel.textColor = .secondaryLabelColor
         }
+
+        pendingAutoSuffixBaseName = nil
     }
 
     // MARK: - Private
