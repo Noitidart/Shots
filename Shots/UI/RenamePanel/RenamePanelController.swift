@@ -370,6 +370,15 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         onComplete?()
     }
 
+    // Fires after the window is truly key — which requires the app to be active.
+    // NSApp.activate(ignoringOtherApps:) is asynchronous on macOS 14+, so the
+    // selectAllText() call in showPanel() may run before activation completes,
+    // causing makeFirstResponder to fail silently. This handler is the reliable
+    // fallback: it fires only when the window can actually accept key focus.
+    func windowDidBecomeKey(_ notification: Notification) {
+        selectAllText()
+    }
+
     func windowDidResignKey(_ notification: Notification) {
         guard allowsFocusLossDismissal, !isBusy else { return }
         close()
