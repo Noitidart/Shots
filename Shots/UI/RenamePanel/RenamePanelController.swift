@@ -228,6 +228,15 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         }
 
         installReturnKeyMonitor()
+
+        // Floating panels with hidesOnDeactivate=false don't reliably fire
+        // windowDidResignKey when the app deactivates (e.g. Cmd+Tab). This app-level
+        // notification is the reliable fallback.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidDeactivate),
+            name: NSApplication.didResignActiveNotification, object: nil
+        )
+
         selectAllText()
     }
 
@@ -367,6 +376,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
 
     func windowWillClose(_ notification: Notification) {
         removeReturnKeyMonitor()
+        NotificationCenter.default.removeObserver(self, name: NSApplication.didResignActiveNotification, object: nil)
         onComplete?()
     }
 
@@ -385,6 +395,11 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     }
 
     func windowDidResignMain(_ notification: Notification) {
+        guard allowsFocusLossDismissal, !isBusy else { return }
+        close()
+    }
+
+    @objc private func appDidDeactivate() {
         guard allowsFocusLossDismissal, !isBusy else { return }
         close()
     }
