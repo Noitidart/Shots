@@ -8,6 +8,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     private var onMenuWillOpen: (() -> Void)?
     private var onMenuDidClose: (() -> Void)?
     private var showToast: ((String) -> Void)?
+    private var helpViewController: HelpViewController?
 
     func start(
         getCurrentTarget: @escaping () -> ScreenCaptureTarget?,
@@ -91,6 +92,10 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
 
         menu.addItem(.separator())
 
+        let helpItem = NSMenuItem(title: "Help", action: #selector(showHelp), keyEquivalent: "")
+        helpItem.target = self
+        menu.addItem(helpItem)
+
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
         menu.addItem(quitItem)
@@ -148,14 +153,18 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         let newValue = sender.state != .on
         let success = newValue ? LaunchAtLoginController.enable() : LaunchAtLoginController.disable()
 
-        // Update the checkmark only if the registration actually succeeded.
-        // If it failed (e.g. user denied in System Settings), the old state stays
-        // so the checkmark reflects reality, not what the user tried to do.
         if success {
             sender.state = newValue ? .on : .off
         } else {
             showToast?("Shots: Could not change launch at login. Check System Settings → General → Login Items.")
         }
+    }
+
+    @objc private func showHelp() {
+        if helpViewController == nil {
+            helpViewController = HelpViewController()
+        }
+        helpViewController?.showHelp()
     }
 
     // MARK: - Menu Validation
