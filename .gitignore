@@ -7,3 +7,6 @@ xcuserdata/
 
 # macOS Finder metadata
 .DS_Store
+
+# Build artifacts (archives, exports, notarization zips)
+build/
