@@ -32,6 +32,11 @@ final class AppCoordinator {
                 // in the same app to resign key, so the rename panel can stay
                 // open behind the menu. Explicitly tell the coordinator to
                 // close it before the menu appears.
+                //
+                // Clear previousFrontmostApplication first so the panel's
+                // onComplete doesn't restore focus to the previous app — that
+                // would deactivate us and the menu would close instantly.
+                self?.previousFrontmostApplication = nil
                 self?.renamePanelController?.closeWithoutCancel()
                 self?.renamePanelController = nil
                 // Suspend recent-screenshot hotkeys so they don't collide with
