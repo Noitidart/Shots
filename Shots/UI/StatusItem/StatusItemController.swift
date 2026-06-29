@@ -96,8 +96,9 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         helpItem.target = self
         menu.addItem(helpItem)
 
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
+        quitItem.target = self
         menu.addItem(quitItem)
 
         newStatusItem.menu = menu
@@ -166,6 +167,11 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         }
         helpViewController?.showHelp()
     }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
 
     // MARK: - Menu Validation
 
