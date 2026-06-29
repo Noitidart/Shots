@@ -19,8 +19,10 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     private let helperLabel: NSTextField
     private let iconView: NSImageView
     private let inputEffectView: NSVisualEffectView
-    private let previewImageView: NSImageView?
-    private let previewDisplaySize: CGSize?
+    private var previewImageView: NSImageView?
+    private var previewDisplaySize: CGSize?
+    private var previewWidthConstraint: NSLayoutConstraint?
+    private var previewHeightConstraint: NSLayoutConstraint?
     private let conflictHelperText = "This name already exists, choose a new name, or press Enter again to auto-suffix"
 
     private var idleHelperText: String {
@@ -182,14 +184,19 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         ]
 
         if let previewImageView, let previewDisplaySize {
+            let pw = previewImageView.widthAnchor.constraint(equalToConstant: previewDisplaySize.width)
+            let ph = previewImageView.heightAnchor.constraint(equalToConstant: previewDisplaySize.height)
+            previewWidthConstraint = pw
+            previewHeightConstraint = ph
+
             constraints += [
                 textField.topAnchor.constraint(equalTo: inputEffectView.topAnchor, constant: 18),
                 iconView.centerYAnchor.constraint(equalTo: textField.centerYAnchor),
                 helperLabel.topAnchor.constraint(equalTo: textField.bottomAnchor, constant: 4),
                 previewImageView.topAnchor.constraint(equalTo: helperLabel.bottomAnchor, constant: 14),
                 previewImageView.centerXAnchor.constraint(equalTo: inputEffectView.centerXAnchor),
-                previewImageView.widthAnchor.constraint(equalToConstant: previewDisplaySize.width),
-                previewImageView.heightAnchor.constraint(equalToConstant: previewDisplaySize.height),
+                pw,
+                ph,
                 previewImageView.bottomAnchor.constraint(equalTo: inputEffectView.bottomAnchor, constant: -20)
             ]
         } else {
@@ -251,7 +258,42 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         pendingAutoSuffixBaseName = nil
         selectAllText()
 
-        // TODO: swap preview image when showPreview is true and preview system is wired
+        if showPreview, let previewImageView {
+            updatePreview(for: url)
+        }
+    }
+
+    private func updatePreview(for url: URL) {
+        guard let pixelSize = Self.imagePixelSize(for: url) else { return }
+
+        let screen = Self.screenWithMouse()
+        let newFittedSize = Self.fittedPreviewSize(
+            imagePixelSize: pixelSize,
+            maxPreviewWidth: (screen?.visibleFrame.width ?? 1440) - 84,
+            maxPreviewHeight: (screen?.visibleFrame.height ?? 900) - 220
+        )
+
+        previewDisplaySize = newFittedSize
+        previewImageView?.image = NSImage(contentsOf: url)
+        previewWidthConstraint?.constant = newFittedSize.width
+        previewHeightConstraint?.constant = newFittedSize.height
+
+        let newPanelSize = CGSize(
+            width: max(Layout.defaultPanelSize.width, newFittedSize.width + 84),
+            height: Layout.defaultPanelSize.height + newFittedSize.height + 32
+        )
+
+        if let window {
+            let frame = window.frame
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            let newFrame = NSRect(
+                x: center.x - newPanelSize.width / 2,
+                y: center.y - newPanelSize.height / 2,
+                width: newPanelSize.width,
+                height: newPanelSize.height
+            )
+            window.setFrame(newFrame, display: true, animate: false)
+        }
     }
 
     func setBusy(_ isBusy: Bool) {
