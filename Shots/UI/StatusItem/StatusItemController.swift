@@ -68,6 +68,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         let openFolderItem = NSMenuItem(title: "Open Screenshots Folder", action: #selector(openScreenshotsFolder), keyEquivalent: "o")
         openFolderItem.keyEquivalentModifierMask = [.command]
         openFolderItem.target = self
+        openFolderItem.tag = MenuTags.folderRelated
         menu.addItem(openFolderItem)
 
         // Ordered safest-first: ⌘T is permanently bound to the safest scope (14+ days).
@@ -182,14 +183,16 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         removeRecentSectionItems(from: menu)
+        removeTargetInfoItems(from: menu)
         addRecentSectionItemsIfFolder(menu)
+        addTargetInfoItems(menu)
     }
 
     // MARK: - Recent Section
 
     private func removeRecentSectionItems(from menu: NSMenu) {
         menu.items
-            .filter { $0.tag == RecentScreenshots.menuTag }
+            .filter { $0.tag == MenuTags.recentScreenshots }
             .reversed()
             .forEach(menu.removeItem)
     }
@@ -205,11 +208,11 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         // an impossible case isn't worth the complexity.
         guard let screenshots = try? ScreenshotLocator.screenshotURLsSortedByCreatedAtDesc(in: url) else { return }
 
-        let recent = Array(screenshots.prefix(RecentScreenshots.maxCount))
+        let recent = Array(screenshots.prefix(9))
 
         if recent.isEmpty {
             let placeholder = NSMenuItem(title: "No screenshots yet", action: nil, keyEquivalent: "")
-            placeholder.tag = RecentScreenshots.menuTag
+            placeholder.tag = MenuTags.recentScreenshots
             placeholder.isEnabled = false
             menu.insertItem(placeholder, at: 0)
         } else {
@@ -223,25 +226,69 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
                 item.keyEquivalentModifierMask = [.command, .option]
                 item.target = self
                 item.representedObject = url
-                item.tag = RecentScreenshots.menuTag
+                item.tag = MenuTags.recentScreenshots
                 menu.insertItem(item, at: index)
             }
         }
 
         let separator = NSMenuItem.separator()
-        separator.tag = RecentScreenshots.menuTag
+        separator.tag = MenuTags.recentScreenshots
         menu.insertItem(separator, at: recent.isEmpty ? 1 : recent.count)
+    }
+
+    // MARK: - Target Info Section
+
+    // Folder mode: the folder name sits near the folder-dependent actions it describes.
+    // Non-folder mode: the target label and an explanatory note move to the top so the
+    // user sees the incompatibility before reaching the disabled actions below.
+    private func removeTargetInfoItems(from menu: NSMenu) {
+        menu.items
+            .filter { $0.tag == MenuTags.targetInfo }
+            .reversed()
+            .forEach(menu.removeItem)
+    }
+
+    private func addTargetInfoItems(_ menu: NSMenu) {
+        guard let target = getCurrentTarget?() else { return }
+
+        switch target {
+        case .directory(let url):
+            let headerItem = NSMenuItem()
+            headerItem.view = StatusMenuHeaderView(text: url.lastPathComponent)
+            headerItem.tag = MenuTags.targetInfo
+            headerItem.isEnabled = false
+
+            if let firstFolderRelatedIndex = menu.items.firstIndex(where: { $0.tag == MenuTags.folderRelated }) {
+                menu.insertItem(headerItem, at: firstFolderRelatedIndex)
+            }
+
+        case .nonFolder(let label):
+            let headerItem = NSMenuItem()
+            headerItem.view = StatusMenuHeaderView(text: "Screenshot Target: \(label)")
+            headerItem.tag = MenuTags.targetInfo
+            headerItem.isEnabled = false
+            menu.insertItem(headerItem, at: 0)
+
+            let noteItem = NSMenuItem()
+            noteItem.view = StatusMenuNoteView(text: "Use ⌘⇧5 → Options → Pick a folder.")
+            noteItem.tag = MenuTags.targetInfo
+            noteItem.isEnabled = false
+            menu.insertItem(noteItem, at: 1)
+
+            let separator = NSMenuItem.separator()
+            separator.tag = MenuTags.targetInfo
+            menu.insertItem(separator, at: 2)
+        }
     }
 }
 
-// MARK: - Recent Screenshots Constants
+// MARK: - Menu Constants
 
-private enum RecentScreenshots {
+private enum MenuTags {
     // Start at 1, not 0 as it is NSMenuItem's default tag, so using 0 would
     // match every standard menu item.
-    static let menuTag = 1
+    static let recentScreenshots = 1
+    static let targetInfo = 2
 
-    // Limited to 9 because menu items use ⌘⌥1 through ⌘⌥9 as key equivalents,
-    // and keyEquivalent is a single character — 10+ isn't possible.
-    static let maxCount = 9
+    static let folderRelated = 3
 }
