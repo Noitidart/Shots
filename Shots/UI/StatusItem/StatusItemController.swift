@@ -52,10 +52,16 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
 
         // MARK: - Preferences related menu items
 
-        let quotePathsItem = NSMenuItem(title: "Quote Copied Paths (CLI Friendly)", action: #selector(toggleQuotePaths(_:)), keyEquivalent: "")
-        quotePathsItem.target = self
-        quotePathsItem.state = AppPreferences.wrapCopiedPathsInSingleQuotes ? .on : .off
-        menu.addItem(quotePathsItem)
+        let currentFormat = AppPreferences.defaultCopiedPathFormat
+        for format in CopiedPathFormat.allCases {
+            let item = NSMenuItem(title: format.menuDisplayName, action: #selector(setCopiedPathFormat(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = format
+            item.state = (format == currentFormat) ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
 
         let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
         launchAtLoginItem.target = self
@@ -144,10 +150,17 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         }
     }
 
-    @objc private func toggleQuotePaths(_ sender: NSMenuItem) {
-        let newValue = sender.state != .on
-        AppPreferences.wrapCopiedPathsInSingleQuotes = newValue
-        sender.state = newValue ? .on : .off
+    @objc private func setCopiedPathFormat(_ sender: NSMenuItem) {
+        guard let format = sender.representedObject as? CopiedPathFormat else { return }
+        AppPreferences.defaultCopiedPathFormat = format
+
+        // Update checkmarks: only the selected format shows .on
+        if let menu = statusItem?.menu {
+            for item in menu.items where item.action == #selector(setCopiedPathFormat(_:)) {
+                let itemFormat = item.representedObject as? CopiedPathFormat
+                item.state = (itemFormat == format) ? .on : .off
+            }
+        }
     }
 
     @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {

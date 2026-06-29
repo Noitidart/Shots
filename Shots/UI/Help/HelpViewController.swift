@@ -94,6 +94,16 @@ final class HelpViewController: NSWindowController {
 
         spacer()
 
+        header("Copied Path Format")
+        body("Three formats are available when pressing Enter in the rename panel. Choose the default from the menu, or override per-paste using modifier keys.")
+        shortcut("Enter", "Copy using the default format (shown in the panel's helper text)")
+        shortcut("⌘Enter", "Copy with no quotes — for Finder (Cmd+Shift+G) and apps that don't understand quotes")
+        shortcut("⌃Enter", "Copy as Markdown Code — backtick-wrapped for coding agents")
+        body("CLI Friendly only adds single quotes when the path contains spaces — no spaces means no quotes.")
+        body("Markdown Code (Anti Coding Agent Auto-Attach) wraps the path in backticks so coding agents like OpenCode treat it as inline code text instead of attaching the image. Use this when an MCP tool needs the path string rather than the image.")
+
+        spacer()
+
         header("Menu Shortcuts")
         shortcut("⌘O", "Open the screenshots folder")
         shortcut("⌘T", "Trash screenshots older than 14 days")

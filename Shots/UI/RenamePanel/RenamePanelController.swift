@@ -21,17 +21,28 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     private let inputEffectView: NSVisualEffectView
     private let previewImageView: NSImageView?
     private let previewDisplaySize: CGSize?
-    private let idleHelperText = "Press Enter to copy path, optionally rename first. Press Esc to cancel"
     private let conflictHelperText = "This name already exists, choose a new name, or press Enter again to auto-suffix"
+
+    private var idleHelperText: String {
+        Self.formatHelperText()
+    }
+
+    private static func formatHelperText() -> String {
+        let defaultFormat = AppPreferences.defaultCopiedPathFormat
+        let cmdFormat = defaultFormat == .cliFriendly ? CopiedPathFormat.noQuotes : .cliFriendly
+        let ctrlFormat = defaultFormat == .markdownCode ? CopiedPathFormat.noQuotes : .markdownCode
+        return "Enter: copy \(defaultFormat.shortName) · ⌘Enter: \(cmdFormat.shortName) · ⌃Enter: \(ctrlFormat.shortName) · Esc: cancel"
+    }
     private var allowsFocusLossDismissal = true
     private var isBusy = false
     private var pendingAutoSuffixBaseName: String?
+    private var keyEventMonitor: Any?
 
     init(fileURL: URL, showPreview: Bool = false) {
         self.fileURL = fileURL
         let baseName = fileURL.deletingPathExtension().lastPathComponent
         textField = NSTextField(string: baseName)
-        helperLabel = NSTextField(labelWithString: idleHelperText)
+        helperLabel = NSTextField(labelWithString: Self.formatHelperText())
         iconView = NSImageView(
             image: NSImage(
                 systemSymbolName: "square.and.pencil",
@@ -216,6 +227,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
             window.makeKeyAndOrderFront(nil)
         }
 
+        installReturnKeyMonitor()
         selectAllText()
     }
 
@@ -276,7 +288,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
 
     // MARK: - Rename Flow
 
-    private func handleSubmit() {
+    private func handleSubmit(copyFormat: CopiedPathFormat) {
         do {
             let proposedName = try FileSystem.validateName(textField.stringValue)
             let originalURL = fileURL
@@ -284,7 +296,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
 
             // Same name — no rename needed, just copy the existing path.
             if proposedName == originalName {
-                copyPathToClipboard(originalURL.path)
+                copyPathToClipboard(originalURL.path, format: copyFormat)
                 dismissAfterSuccess()
                 return
             }
@@ -303,7 +315,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
             // Optimistic clipboard copy — put the new path on the clipboard before
             // renaming so the user can paste immediately. If the rename fails, the
             // clipboard is restored to the original path.
-            copyPathToClipboard(targetURL.path)
+            copyPathToClipboard(targetURL.path, format: copyFormat)
             setBusy(true)
 
             Task { [weak self] in
@@ -317,7 +329,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
                 } catch {
                     // Always restore clipboard on failure, even if the panel switched
                     // to a different file — the clipboard shouldn't keep a stale wrong path.
-                    self.copyPathToClipboard(originalURL.path)
+                    self.copyPathToClipboard(originalURL.path, format: copyFormat)
 
                     guard self.fileURL == originalURL else { return }
                     self.setBusy(false)
@@ -336,11 +348,10 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         }
     }
 
-    private func copyPathToClipboard(_ path: String) {
+    private func copyPathToClipboard(_ path: String, format: CopiedPathFormat) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        let stringToCopy = AppPreferences.wrapCopiedPathsInSingleQuotes ? "'\(path)'" : path
-        pasteboard.setString(stringToCopy, forType: .string)
+        pasteboard.setString(format.wrap(path), forType: .string)
     }
 
     private func showError(_ error: Error) {
@@ -355,6 +366,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     // MARK: - Window Delegate
 
     func windowWillClose(_ notification: Notification) {
+        removeReturnKeyMonitor()
         onComplete?()
     }
 
@@ -371,11 +383,6 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     // MARK: - Text Field Delegate
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            handleSubmit()
-            return true
-        }
-
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             window?.close()
             return true
@@ -396,6 +403,54 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     }
 
     // MARK: - Private
+
+    // ⌘Enter and ⌃Enter don't generate insertNewline — macOS intercepts them
+    // before the text field sees them. A local event monitor catches the Return
+    // key directly and routes it to handleSubmit with the right format.
+    private func installReturnKeyMonitor() {
+        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.window?.isVisible == true, !self.isBusy else { return event }
+
+            // Return key
+            if event.keyCode == 36 {
+                let flags = event.modifierFlags.intersection([.command, .control])
+                if flags.isEmpty || flags == .command || flags == .control {
+                    self.handleSubmit(copyFormat: self.copyFormat(from: event.modifierFlags))
+                    return nil
+                }
+            }
+
+            return event
+        }
+    }
+
+    private func removeReturnKeyMonitor() {
+        if let monitor = keyEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyEventMonitor = nil
+        }
+    }
+
+    // Modifier-to-format mapping. ⌘Enter prefers CLI Friendly, ⌃Enter prefers
+    // Markdown Code — whichever is the default falls back to No Quotes.
+    //
+    // | Default       | Enter       | ⌘Enter     | ⌃Enter       |
+    // |---------------|-------------|------------|--------------|
+    // | No Quotes     | noQuotes    | cliFriendly| markdownCode |
+    // | CLI Friendly  | cliFriendly | noQuotes   | markdownCode |
+    // | Markdown Code | markdownCode| cliFriendly| noQuotes     |
+    private func copyFormat(from flags: NSEvent.ModifierFlags) -> CopiedPathFormat {
+        let defaultFormat = AppPreferences.defaultCopiedPathFormat
+        let relevantFlags = flags.intersection([.command, .control])
+
+        if relevantFlags == .command {
+            return defaultFormat == .cliFriendly ? .noQuotes : .cliFriendly
+        } else if relevantFlags == .control {
+            return defaultFormat == .markdownCode ? .noQuotes : .markdownCode
+        } else {
+            return defaultFormat
+        }
+    }
 
     private func focusTextFieldAtEnd() {
         guard let window = window else { return }
