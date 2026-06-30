@@ -130,6 +130,32 @@ final class AppCoordinator {
                 self?.renamePanelController = nil
                 self?.restorePreviousAppFocus()
             }
+            // Fire and forget: the panel closes immediately while the coordinator
+            // handles trashing in the background. The panel can't close itself and
+            // process the trash at the same time.
+            panel.trash = { [weak self, weak panel] in
+                guard let self, let panel, case .directory(let screenshotsFolder) = self.currentScreenCaptureTarget else { return }
+                let fileURL = panel.fileURL
+                let fileName = fileURL.lastPathComponent
+                panel.dismissAfterSuccess()
+
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
+                    } catch {
+                        let rankMessage: String
+                        if let screenshots = try? ScreenshotLocator.screenshotURLsSortedByCreatedAtDesc(in: screenshotsFolder),
+                           let rank = screenshots.firstIndex(where: { $0 == fileURL }) {
+                            rankMessage = " Hit ⌘⌥\(rank + 1) to try again."
+                        } else {
+                            rankMessage = ""
+                        }
+                        DispatchQueue.main.async {
+                            self.toastController.show(message: "Could not trash \(fileName).\(rankMessage)")
+                        }
+                    }
+                }
+            }
             panel.showPanel()
             renamePanelController = panel
         }

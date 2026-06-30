@@ -9,12 +9,13 @@ private final class FloatingRenamePanel: NSPanel {
 @MainActor
 final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     var onComplete: (() -> Void)?
+    var trash: (() -> Void) = {}
 
     private enum Layout {
         static let defaultPanelSize = CGSize(width: 780, height: 106)
     }
 
-    private var fileURL: URL
+    private(set) var fileURL: URL
     private let textField: NSTextField
     private let helperLabel: NSTextField
     private let iconView: NSImageView
@@ -33,10 +34,11 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         let defaultFormat = AppPreferences.defaultCopiedPathFormat
         let cmdFormat = defaultFormat == .cliFriendly ? CopiedPathFormat.noQuotes : .cliFriendly
         let ctrlFormat = defaultFormat == .markdownCode ? CopiedPathFormat.noQuotes : .markdownCode
-        return "Enter: copy \(defaultFormat.shortName) · ⌘Enter: \(cmdFormat.shortName) · ⌃Enter: \(ctrlFormat.shortName) · Esc: cancel"
+        return "Enter: copy \(defaultFormat.shortName) · ⌘Enter: \(cmdFormat.shortName) · ⌃Enter: \(ctrlFormat.shortName) · Esc: cancel · ⌘⌫: trash"
     }
     private var allowsFocusLossDismissal = true
     private var isBusy = false
+    private var isTrashDelete = false
     private var pendingAutoSuffixBaseName: String?
     private var keyEventMonitor: Any?
 
@@ -256,6 +258,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         helperLabel.textColor = .secondaryLabelColor
         allowsFocusLossDismissal = true
         pendingAutoSuffixBaseName = nil
+        isTrashDelete = false
         selectAllText()
 
         if showPreview, let previewImageView {
@@ -486,6 +489,23 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
                 }
             }
 
+            // Any key other than ⌘⌫ clears the trash-delete state, so the
+            // pending hint (if any) is cancelled before the key is processed.
+            let isCommandBackspace = event.keyCode == 51 && event.modifierFlags.contains(.command)
+            if isCommandBackspace {
+                if self.textField.stringValue.isEmpty || self.isAllTextSelected() {
+                    self.trash()
+                    return nil
+                }
+                self.isTrashDelete = true
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.isTrashDelete else { return }
+                    self.showTrashHint()
+                }
+                return event
+            }
+
+            self.isTrashDelete = false
             return event
         }
     }
@@ -518,6 +538,11 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         }
     }
 
+    private func isAllTextSelected() -> Bool {
+        guard let editor = window?.fieldEditor(true, for: textField) as? NSTextView else { return false }
+        return editor.selectedRange.length == textField.stringValue.count && !textField.stringValue.isEmpty
+    }
+
     private func focusTextFieldAtEnd() {
         guard let window = window else { return }
 
@@ -526,6 +551,18 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         if let editor = window.fieldEditor(true, for: textField) as? NSTextView {
             editor.string = textField.stringValue
             editor.selectedRange = NSRange(location: textField.stringValue.count, length: 0)
+        }
+    }
+
+    private func showTrashHint() {
+        pendingAutoSuffixBaseName = nil
+        helperLabel.stringValue = "Hit ⌘⌫ again to trash"
+        helperLabel.textColor = .systemBlue
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.isTrashDelete else { return }
+            self.isTrashDelete = false
+            self.helperLabel.stringValue = self.idleHelperText
+            self.helperLabel.textColor = .secondaryLabelColor
         }
     }
 
