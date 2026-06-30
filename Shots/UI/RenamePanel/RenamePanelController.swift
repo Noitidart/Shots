@@ -329,13 +329,19 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         helperLabel.stringValue = conflictHelperText
         helperLabel.textColor = .systemRed
         shakeInput()
-        focusTextFieldAtEnd()
+        // We want caret at end as likely user will add a suffix.
+        restoreEditingWithCaretAtEnd()
 
+        // Retry focusing after delay in case focus failed because the text
+        // field didn't get enabled fast enough to be before the focus request.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
-            self?.focusTextFieldAtEnd()
+            self?.restoreEditingWithCaretAtEnd()
         }
     }
 
+    // Defer selection to the next main-queue turn so AppKit has a chance to
+    // finish activation and field-editor setup before we ask the text field to
+    // select all.
     func selectAllText() {
         DispatchQueue.main.async { [weak self] in
             self?.textField.selectText(nil)
@@ -514,10 +520,14 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         }
     }
 
-    private func focusTextFieldAtEnd() {
+    private func restoreEditingWithCaretAtEnd() {
         guard window != nil else { return }
 
+        // We select all text here not because we want to select all text, but
+        // to focus the field, as the field was probably disabled before this
+        // was called, which ended editing and removed active editor.
         textField.selectText(nil)
+
         (textField.currentEditor() as? NSTextView)?.moveToEndOfLine(nil)
     }
 
