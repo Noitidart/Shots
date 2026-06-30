@@ -89,8 +89,9 @@ final class HelpViewController: NSWindowController {
         spacer()
 
         header("Rename Panel")
-        body("When you take a screenshot, the rename panel appears automatically with the filename selected. Type a new name and press Enter to rename and copy the path. Press Esc to cancel.")
+        body("When you take a screenshot, the rename panel appears automatically with the filename selected. Type a new name and press Enter to rename and copy the path. Press ⌘⌫ to trash the file. Press Esc to cancel.")
         body("A preview thumbnail is shown only when you open a recent screenshot via the ⌘⌥1-9 hotkeys or from the menu. When a brand-new capture auto-opens the panel, no preview is shown.")
+        shortcut("⌘⌫", "Trash the file")
 
         spacer()
 

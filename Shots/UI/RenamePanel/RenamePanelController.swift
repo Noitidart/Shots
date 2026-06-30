@@ -26,6 +26,7 @@ private final class FloatingRenamePanel: NSPanel {
 @MainActor
 final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     var onComplete: (() -> Void)?
+    var trash: ((URL) -> Void)?
 
     private enum Layout {
         static let defaultPanelSize = CGSize(width: 780, height: 106)
@@ -50,10 +51,13 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         let defaultFormat = AppPreferences.defaultCopiedPathFormat
         let cmdFormat = defaultFormat == .cliFriendly ? CopiedPathFormat.noQuotes : .cliFriendly
         let ctrlFormat = defaultFormat == .markdownCode ? CopiedPathFormat.noQuotes : .markdownCode
-        return "Enter: copy \(defaultFormat.shortName) · ⌘Enter: \(cmdFormat.shortName) · ⌃Enter: \(ctrlFormat.shortName) · Esc: cancel"
+        return "Enter: copy \(defaultFormat.shortName) · ⌘Enter: \(cmdFormat.shortName) · ⌃Enter: \(ctrlFormat.shortName) · Esc: cancel · ⌘⌫: trash"
     }
+    private let trashHintText = "Hit ⌘⌫ again to trash"
     private var allowsFocusLossDismissal = true
     private var isBusy = false
+    private var isTrashDeleteArmed = false
+    private var isNextTextChangeTheOneThatShowedTrashHint = false
     private var pendingAutoSuffixBaseName: String?
 
     init(fileURL: URL, showPreview: Bool = false) {
@@ -275,6 +279,8 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         helperLabel.stringValue = idleHelperText
         helperLabel.textColor = .secondaryLabelColor
         allowsFocusLossDismissal = true
+        isTrashDeleteArmed = false
+        isNextTextChangeTheOneThatShowedTrashHint = false
         pendingAutoSuffixBaseName = nil
         selectAllText()
 
@@ -469,6 +475,10 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     // MARK: - Text Field Delegate
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector != #selector(NSResponder.deleteToBeginningOfLine(_:)) {
+            clearTrashDeleteState()
+        }
+
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             window?.close()
             return true
@@ -479,11 +489,33 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
             return true
         }
 
+        if commandSelector == #selector(NSResponder.deleteToBeginningOfLine(_:)) {
+            if isTrashDeleteArmed || textField.stringValue.isEmpty || isAllTextSelected(in: textView) || isCaretAtStart(in: textView) {
+                clearTrashDeleteState()
+                dismissAfterSuccess()
+                trash?(fileURL)
+                return true
+            }
+
+            isTrashDeleteArmed = true
+            isNextTextChangeTheOneThatShowedTrashHint = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.isNextTextChangeTheOneThatShowedTrashHint = false
+                self.showTrashHint()
+            }
+            return false
+        }
+
         return false
     }
 
     func controlTextDidChange(_ obj: Notification) {
         guard !isBusy else { return }
+
+        if isTrashDeleteArmed, !isNextTextChangeTheOneThatShowedTrashHint {
+            clearTrashDeleteState()
+        }
 
         if helperLabel.stringValue != idleHelperText {
             helperLabel.stringValue = idleHelperText
@@ -529,6 +561,35 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         textField.selectText(nil)
 
         (textField.currentEditor() as? NSTextView)?.moveToEndOfLine(nil)
+    }
+
+    private func isAllTextSelected(in textView: NSTextView) -> Bool {
+        textView.selectedRange.length == textField.stringValue.count && !textField.stringValue.isEmpty
+    }
+
+    private func isCaretAtStart(in textView: NSTextView) -> Bool {
+        textView.selectedRange.location == 0 && textView.selectedRange.length == 0
+    }
+
+    private func clearTrashDeleteState() {
+        guard isTrashDeleteArmed else { return }
+        isTrashDeleteArmed = false
+        isNextTextChangeTheOneThatShowedTrashHint = false
+        if helperLabel.stringValue == trashHintText {
+            helperLabel.stringValue = idleHelperText
+            helperLabel.textColor = .secondaryLabelColor
+        }
+    }
+
+    private func showTrashHint() {
+        guard isTrashDeleteArmed else { return }
+        pendingAutoSuffixBaseName = nil
+        helperLabel.stringValue = trashHintText
+        helperLabel.textColor = .systemBlue
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.isTrashDeleteArmed else { return }
+            self.clearTrashDeleteState()
+        }
     }
 
     private func shakeInput() {

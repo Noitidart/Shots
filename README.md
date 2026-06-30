@@ -21,9 +21,19 @@ A macOS menu bar app that renames screenshots the moment you take them — and c
 
 ## How it works
 
-When you take a screenshot (⌘⇧3 or ⌘⇧4), the rename panel appears instantly with the filename selected. Type a new name, press **Enter**, and the file is renamed with its new path copied to your clipboard. Press **Esc** to cancel and return to what you were doing.
+When you take a screenshot (⌘⇧3 or ⌘⇧4), the rename panel appears instantly with the filename selected. Type a new name, press **Enter**, and the file is renamed with its new path copied to your clipboard. Press **⌘⌫** to trash the file. Press **Esc** to cancel and return to what you were doing.
 
 If multiple screenshots are taken back-to-back, the first one stays open for renaming. The rest appear in the menu's recent list, where you can pick them in order.
+
+## Rename Panel Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| **Enter** | Rename and copy path (default format) |
+| **⌘Enter** | Rename and copy path (CLI Friendly) |
+| **⌃Enter** | Rename and copy path (Markdown Code) |
+| **⌘⌫** | Move the file to Trash |
+| **Esc** | Cancel |
 
 ## Copied Path Format
 
