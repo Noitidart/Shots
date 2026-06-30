@@ -338,12 +338,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
 
     func selectAllText() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, let window = self.window else { return }
-            window.makeFirstResponder(self.textField)
-            if let editor = window.fieldEditor(true, for: self.textField) as? NSTextView {
-                editor.string = self.textField.stringValue
-                editor.selectedRange = NSRange(location: 0, length: self.textField.stringValue.count)
-            }
+            self?.textField.selectText(nil)
         }
     }
 
@@ -520,14 +515,10 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     }
 
     private func focusTextFieldAtEnd() {
-        guard let window = window else { return }
+        guard window != nil else { return }
 
-        window.makeFirstResponder(textField)
-
-        if let editor = window.fieldEditor(true, for: textField) as? NSTextView {
-            editor.string = textField.stringValue
-            editor.selectedRange = NSRange(location: textField.stringValue.count, length: 0)
-        }
+        textField.selectText(nil)
+        (textField.currentEditor() as? NSTextView)?.moveToEndOfLine(nil)
     }
 
     private func shakeInput() {
