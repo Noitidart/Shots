@@ -2,8 +2,25 @@ import AppKit
 import ImageIO
 
 private final class FloatingRenamePanel: NSPanel {
+    var onModifiedReturn: ((NSEvent.ModifierFlags) -> Bool)?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .control])
+        guard event.type == .keyDown,
+              event.keyCode == 36,
+              modifiers == .command || modifiers == .control else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        if onModifiedReturn?(event.modifierFlags) == true {
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 @MainActor
@@ -38,7 +55,6 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     private var allowsFocusLossDismissal = true
     private var isBusy = false
     private var pendingAutoSuffixBaseName: String?
-    private var keyEventMonitor: Any?
 
     init(fileURL: URL, showPreview: Bool = false) {
         self.fileURL = fileURL
@@ -109,6 +125,12 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         panel.animationBehavior = .utilityWindow
 
         super.init(window: panel)
+
+        panel.onModifiedReturn = { [weak self] flags in
+            guard let self, self.window?.isVisible == true, !self.isBusy else { return false }
+            self.handleSubmit(copyFormat: self.copyFormat(from: flags))
+            return true
+        }
 
         let rootView = NSView(frame: panel.contentView?.bounds ?? .zero)
         rootView.translatesAutoresizingMaskIntoConstraints = false
@@ -233,8 +255,6 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
             }
             window.makeKeyAndOrderFront(nil)
         }
-
-        installReturnKeyMonitor()
 
         // Floating panels with hidesOnDeactivate=false don't reliably fire
         // windowDidResignKey when the app deactivates (e.g. Cmd+Tab). This app-level
@@ -417,7 +437,6 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     // MARK: - Window Delegate
 
     func windowWillClose(_ notification: Notification) {
-        removeReturnKeyMonitor()
         NotificationCenter.default.removeObserver(self, name: NSApplication.didResignActiveNotification, object: nil)
         onComplete?()
     }
@@ -454,6 +473,11 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
             return true
         }
 
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            handleSubmit(copyFormat: copyFormat(from: []))
+            return true
+        }
+
         return false
     }
 
@@ -471,31 +495,8 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     // MARK: - Private
 
     // ⌘Enter and ⌃Enter don't generate insertNewline — macOS intercepts them
-    // before the text field sees them. A local event monitor catches the Return
-    // key directly and routes it to handleSubmit with the right format.
-    private func installReturnKeyMonitor() {
-        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.window?.isVisible == true, !self.isBusy else { return event }
-
-            // Return key
-            if event.keyCode == 36 {
-                let flags = event.modifierFlags.intersection([.command, .control])
-                if flags.isEmpty || flags == .command || flags == .control {
-                    self.handleSubmit(copyFormat: self.copyFormat(from: event.modifierFlags))
-                    return nil
-                }
-            }
-
-            return event
-        }
-    }
-
-    private func removeReturnKeyMonitor() {
-        if let monitor = keyEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            keyEventMonitor = nil
-        }
-    }
+    // before the text field sees them. The panel handles those modified Return
+    // key equivalents directly and routes them to handleSubmit with the right format.
 
     // Modifier-to-format mapping. ⌘Enter prefers CLI Friendly, ⌃Enter prefers
     // Markdown Code — whichever is the default falls back to No Quotes.
