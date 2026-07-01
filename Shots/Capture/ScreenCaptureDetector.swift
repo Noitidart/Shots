@@ -67,8 +67,20 @@ final class ScreenCaptureDetector {
     private func scan() {
         guard let folder = watchedFolderURL else { return }
 
-        let all = (try? ScreenshotLocator.screenshotURLsSortedByCreatedAtDesc(in: folder)) ?? []
+        // mdfind is a blocking subprocess — run it off the main thread so a folder
+        // change during an interaction (e.g. our own preview-rename mid-drag) can't
+        // stall the UI or the drag tracking loop. `folder` is read on main here; only
+        // the static, non-isolated ScreenshotLocator call runs off-main, and all
+        // mutable state is touched back on main in handleScanResult.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let all = (try? ScreenshotLocator.screenshotURLsSortedByCreatedAtDesc(in: folder)) ?? []
+            DispatchQueue.main.async { [weak self] in
+                self?.handleScanResult(all)
+            }
+        }
+    }
 
+    private func handleScanResult(_ all: [URL]) {
         // `all` is sorted descending by creation date, so the first element is the newest.
         if let newest = all.first, Self.creationDate(for: newest) > lastSeenCaptureDate {
             lastSeenCaptureDate = Self.creationDate(for: newest)

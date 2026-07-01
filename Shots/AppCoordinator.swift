@@ -141,23 +141,27 @@ final class AppCoordinator {
             // to the same screenshot via ⌘⌥<rank>.
             panel.trash = { [weak self] fileURL in
                 guard let self else { return }
-                let screenshotsFolder = fileURL.deletingLastPathComponent()
                 let fileName = fileURL.lastPathComponent
 
                 DispatchQueue.global(qos: .userInitiated).async {
                     do {
                         try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
                     } catch {
-                        let rankMessage: String
-                        if let screenshots = try? ScreenshotLocator.screenshotURLsSortedByCreatedAtDesc(in: screenshotsFolder),
-                           let rank = screenshots.firstIndex(where: { $0 == fileURL }) {
-                            rankMessage = " Hit ⌘⌥\(rank + 1) to try again."
-                        } else {
-                            rankMessage = ""
-                        }
+                        let message = "Could not trash \(fileName).\(rankRetryHint(for: fileURL))"
                         DispatchQueue.main.async {
-                            self.toastController.show(message: "Could not trash \(fileName).\(rankMessage)")
+                            self.toastController.show(message: message)
                         }
+                    }
+                }
+            }
+            // A drag whose rename failed is aborted before it starts; surface why
+            // and offer a quick way back to the same screenshot.
+            panel.onRenameFailed = { [weak self] url, message in
+                guard let self else { return }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let fullMessage = message + rankRetryHint(for: url)
+                    DispatchQueue.main.async {
+                        self.toastController.show(message: fullMessage)
                     }
                 }
             }
@@ -231,4 +235,17 @@ final class AppCoordinator {
     private func resumeRecentScreenshotHotkeys() {
         registerRecentScreenshotHotkeys()
     }
+}
+
+// Returns a " Hit ⌘⌥<rank> to try again." hint for a screenshot's current
+// position in its folder, or "" if it can't be located. Shared by the trash and
+// drag-rename failure toasts so the user gets a quick way back to the file.
+// Free (not a method) so it can run off the main thread without touching self.
+private func rankRetryHint(for url: URL) -> String {
+    let folder = url.deletingLastPathComponent()
+    guard let screenshots = try? ScreenshotLocator.screenshotURLsSortedByCreatedAtDesc(in: folder),
+          let rank = screenshots.firstIndex(where: { $0 == url }) else {
+        return ""
+    }
+    return " Hit ⌘⌥\(rank + 1) to try again."
 }

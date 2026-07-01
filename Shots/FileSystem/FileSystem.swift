@@ -91,6 +91,14 @@ enum FileSystem {
         }
     }
 
+    /// Synchronous rename (no retry) for call sites that can't await — currently
+    /// the drag preview, which needs the file at its new path before the drag's
+    /// pasteboard is built. Only call when the file is already settled (the
+    /// preview is showing, so it is). Throws on conflict or other errors.
+    static func renameSync(from originalURL: URL, to targetURL: URL) throws {
+        try performRename(from: originalURL, to: targetURL)
+    }
+
     private static func performRename(from originalURL: URL, to targetURL: URL) throws {
         if FileManager.default.fileExists(atPath: targetURL.path) {
             throw RenameFailure.destinationAlreadyExists

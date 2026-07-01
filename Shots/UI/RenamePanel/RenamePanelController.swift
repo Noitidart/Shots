@@ -28,7 +28,10 @@ private final class FloatingRenamePanel: NSPanel {
 // it doesn't block the drop target, then either restores it (cancelled/missed)
 // or closes it (successful drop) via the controller callbacks.
 private final class DraggablePreviewImageView: NSImageView, NSDraggingSource {
-    var fileURL: URL?
+    // Asks the controller for the URL to drag. The controller renames the file
+    // first if the field holds a new name; returning nil aborts the drag (e.g. a
+    // rename failure). The view itself never owns the URL.
+    var onDragRequested: (() -> URL?)?
     var onDragWillBegin: (() -> Void)?
     var onDragEnded: ((NSDragOperation, NSPoint) -> Void)?
 
@@ -50,16 +53,21 @@ private final class DraggablePreviewImageView: NSImageView, NSDraggingSource {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard !hasStartedDragForCurrentMouseDown, let url = fileURL, let image = image else { return }
+        guard !hasStartedDragForCurrentMouseDown else { return }
 
         let dx = event.locationInWindow.x - mouseDownLocation.x
         let dy = event.locationInWindow.y - mouseDownLocation.y
         guard (dx * dx + dy * dy).squareRoot() >= Self.dragThreshold else { return }
 
+        // Latch now — one drag attempt per mouse-down, whether it begins, aborts
+        // (controller returned nil, e.g. a rename failure), or is a no-op. Without
+        // this a failed rename would retry on every mouseDragged until release.
+        hasStartedDragForCurrentMouseDown = true
+
+        guard let image = image, let url = onDragRequested?() else { return }
         let item = NSDraggingItem(pasteboardWriter: ScreenshotDragWriter(url: url, image: image))
         item.setDraggingFrame(bounds, contents: image)
         beginDraggingSession(with: [item], event: event, source: self)
-        hasStartedDragForCurrentMouseDown = true
     }
 
     // MARK: - NSDraggingSource
@@ -135,12 +143,20 @@ private final class ScreenshotDragWriter: NSObject, NSPasteboardWriting {
 final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     var onComplete: (() -> Void)?
     var trash: ((URL) -> Void)?
+    // (url, humanMessage) fired when renaming the file for a drag fails, so the
+    // drag is aborted. AppCoordinator shows it as a toast with a ⌘⌥<rank> retry
+    // hint appended.
+    var onRenameFailed: ((URL, String) -> Void)?
 
     private enum Layout {
         static let defaultPanelSize = CGSize(width: 780, height: 106)
     }
 
     private var fileURL: URL
+    // The file's URL before a drag-time rename, so we can revert on cancel. Only
+    // non-nil between drag-start (rename applied) and drag-end (reverted or the
+    // panel closes).
+    private var dragRenamedOriginalURL: URL?
     private let textField: NSTextField
     private let helperLabel: NSTextField
     private let iconView: NSImageView
@@ -206,7 +222,6 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
             imageView.wantsLayer = true
             imageView.layer?.cornerRadius = 20
             imageView.layer?.masksToBounds = true
-            imageView.fileURL = fileURL
             previewImageView = imageView
             previewDisplaySize = fittedSize
         } else {
@@ -247,6 +262,9 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
 
         // Wire the preview drag callbacks here (not during view creation) so the
         // [weak self] capture happens after super.init, when self is valid.
+        previewImageView?.onDragRequested = { [weak self] in
+            self?.prepareDragURL()
+        }
         previewImageView?.onDragWillBegin = { [weak self] in
             self?.handleDragWillBegin()
         }
@@ -424,7 +442,6 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         )
 
         previewDisplaySize = newFittedSize
-        previewImageView?.fileURL = url
         previewImageView?.image = NSImage(contentsOf: url)
         previewWidthConstraint?.constant = newFittedSize.width
         previewHeightConstraint?.constant = newFittedSize.height
@@ -500,7 +517,11 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
 
     private func handleDragEnded(operation: NSDragOperation, screenPoint: NSPoint) {
         if operation.isEmpty {
-            // Cancelled (Esc) or dropped where nothing accepted it — bring it back.
+            // Cancelled (Esc) or dropped where nothing accepted it. Revert any
+            // drag-time rename first so the file returns to its original name —
+            // cancel must mean "as if the drag never happened," leaving the typed
+            // name in the field so the user can still submit it with Enter.
+            revertDragRenameIfNeeded()
             restorePanelFromDrag()
         } else if operation.contains(.delete) {
             // Trash path. Unlike .move (where the destination relocates the file),
@@ -533,6 +554,59 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         // could immediately close the panel we just brought back.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.allowsFocusLossDismissal = true
+        }
+    }
+
+    // Called by the preview view when the user starts dragging. If the field
+    // holds a new name, the file is renamed synchronously FIRST so the drag
+    // carries the renamed file's URL — the pasteboard path is fixed at drag-start
+    // and can't be changed mid-drag or at drop, so the rename must happen here.
+    // Returns the URL to drag, or nil to abort (rename failed). On a conflict the
+    // name is auto-suffixed so the drag proceeds instead of blocking.
+    private func prepareDragURL() -> URL? {
+        let proposed = (try? FileSystem.validateName(textField.stringValue)) ?? ""
+        let currentName = fileURL.deletingPathExtension().lastPathComponent
+
+        // No valid new name, or unchanged — drag the file as-is, no rename.
+        guard !proposed.isEmpty, proposed != currentName else {
+            return fileURL
+        }
+
+        // Auto-suffix on conflict so an existing name doesn't block the drag.
+        let desiredURL = FileSystem.targetURL(from: fileURL, baseName: proposed)
+        let targetURL = FileManager.default.fileExists(atPath: desiredURL.path)
+            ? FileSystem.autoSuffixedURL(from: fileURL, baseName: proposed)
+            : desiredURL
+
+        do {
+            try FileSystem.renameSync(from: fileURL, to: targetURL)
+        } catch {
+            // Rename failed — abort so we don't attach a misnamed file. The panel
+            // hasn't hidden yet; ask the coordinator to toast the failure.
+            onRenameFailed?(fileURL, "Couldn't rename the file, so the drop was canceled.")
+            return nil
+        }
+
+        dragRenamedOriginalURL = fileURL
+        fileURL = targetURL
+        return targetURL
+    }
+
+    // Reverts a drag-time rename on cancel so the file returns to its original
+    // name — cancel must mean the drag never happened. The field is left
+    // untouched, so the user's typed name remains and Enter will apply it through
+    // the normal flow. A revert failure (rare) is left silent: the file stays
+    // renamed and fileURL keeps matching what's on disk.
+    private func revertDragRenameIfNeeded() {
+        guard let originalURL = dragRenamedOriginalURL else { return }
+        dragRenamedOriginalURL = nil
+
+        let renamedURL = fileURL
+        do {
+            try FileSystem.renameSync(from: renamedURL, to: originalURL)
+            fileURL = originalURL
+        } catch {
+            fileURL = renamedURL
         }
     }
 
