@@ -68,7 +68,7 @@ final class AppCoordinator {
             // user would have to hunt through previews to find where their
             // series started.
             guard self?.renamePanelController == nil else { return }
-            self?.openOrSwitchTo(url: url, showPreview: false)
+            self?.openOrSwitchTo(url: url)
         }
         detector = captureDetector
 
@@ -112,9 +112,9 @@ final class AppCoordinator {
     // So by the time a menu click reaches openOrSwitchTo, the panel is already nil
     // and we take the create path. Auto-capture (file watcher) checks renamePanelController
     // == nil before calling this, so it never interrupts an open panel.
-    func openOrSwitchTo(url: URL, showPreview: Bool = true) {
+    func openOrSwitchTo(url: URL) {
         if let panel = renamePanelController {
-            panel.switchToUrl(url, showPreview: showPreview)
+            panel.switchToUrl(url)
         } else {
             // Capture the frontmost app before activating ourselves, so we can
             // restore focus when the panel closes — like Spotlight returning you
@@ -125,7 +125,7 @@ final class AppCoordinator {
                 previousFrontmostApplication = frontApp
             }
 
-            let panel = RenamePanelController(fileURL: url, showPreview: showPreview)
+            let panel = RenamePanelController(fileURL: url)
             panel.onComplete = { [weak self] in
                 self?.renamePanelController = nil
                 self?.restorePreviousAppFocus()
@@ -216,7 +216,7 @@ final class AppCoordinator {
             return
         }
 
-        openOrSwitchTo(url: screenshots[index], showPreview: true)
+        openOrSwitchTo(url: screenshots[index])
     }
 
     private func suspendRecentScreenshotHotkeys() {

@@ -60,7 +60,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     private var isNextTextChangeTheOneThatShowedTrashHint = false
     private var pendingAutoSuffixBaseName: String?
 
-    init(fileURL: URL, showPreview: Bool = false) {
+    init(fileURL: URL) {
         self.fileURL = fileURL
         let baseName = fileURL.deletingPathExtension().lastPathComponent
         textField = NSTextField(string: baseName)
@@ -73,11 +73,12 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         )
         inputEffectView = NSVisualEffectView()
 
-        // Preview is shown when showPreview is true. The image, its display size,
-        // and the panel size are all derived from fileURL — the panel figures out
-        // everything itself. No external sizing parameters needed.
+        // The image, its display size, and the panel size are all derived from
+        // fileURL — the panel figures out everything itself, so no external
+        // sizing parameters are needed. The else branch (compact, no preview)
+        // is the graceful fallback for an unreadable image.
         // Docs (CGImageSource): https://developer.apple.com/documentation/imageio/cgimagesource
-        if showPreview, let pixelSize = RenamePanelController.imagePixelSize(for: fileURL) {
+        if let pixelSize = RenamePanelController.imagePixelSize(for: fileURL) {
             let screenSize = RenamePanelController.screenWithMouse()
             let fittedSize = RenamePanelController.fittedPreviewSize(
                 imagePixelSize: pixelSize,
@@ -271,7 +272,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         selectAllText()
     }
 
-    func switchToUrl(_ url: URL, showPreview: Bool = true) {
+    func switchToUrl(_ url: URL) {
         fileURL = url
         textField.stringValue = fileURL.deletingPathExtension().lastPathComponent
         isBusy = false
@@ -284,7 +285,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         pendingAutoSuffixBaseName = nil
         selectAllText()
 
-        if showPreview, let previewImageView {
+        if let previewImageView {
             updatePreview(for: url)
         }
     }

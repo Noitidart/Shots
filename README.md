@@ -56,7 +56,7 @@ These work from any application — you don't need to switch to Shots first.
 | **⌘⌥.** | Open the Shots menu |
 | **⌘⌥1–9** | Preview the 1st–9th most recent screenshot (rename and copy optional) |
 
-Panels opened via hotkey show a preview thumbnail. Panels opened automatically from a new capture skip the preview to stay fast.
+Every rename panel shows a preview of the screenshot.
 
 ## Menu Shortcuts
 
