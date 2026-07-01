@@ -23,6 +23,114 @@ private final class FloatingRenamePanel: NSPanel {
     }
 }
 
+// Preview image view that initiates a cross-application drag of the screenshot
+// file when the user drags it. Hides the panel for the duration of the drag so
+// it doesn't block the drop target, then either restores it (cancelled/missed)
+// or closes it (successful drop) via the controller callbacks.
+private final class DraggablePreviewImageView: NSImageView, NSDraggingSource {
+    var fileURL: URL?
+    var onDragWillBegin: (() -> Void)?
+    var onDragEnded: ((NSDragOperation, NSPoint) -> Void)?
+
+    private var mouseDownLocation = CGPoint.zero
+    // Latched true once a drag session has begun for the current mouse-down, and
+    // cleared only on the next mouseDown. Clearing it here (not on drag-end) is
+    // what stops a cancelled drag from re-triggering: after Esc cancels mid-drag
+    // the button is usually still held, so mouseDragged keeps firing.
+    private var hasStartedDragForCurrentMouseDown = false
+    private static let dragThreshold: CGFloat = 4
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownLocation = event.locationInWindow
+        hasStartedDragForCurrentMouseDown = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !hasStartedDragForCurrentMouseDown, let url = fileURL, let image = image else { return }
+
+        let dx = event.locationInWindow.x - mouseDownLocation.x
+        let dy = event.locationInWindow.y - mouseDownLocation.y
+        guard (dx * dx + dy * dy).squareRoot() >= Self.dragThreshold else { return }
+
+        let item = NSDraggingItem(pasteboardWriter: ScreenshotDragWriter(url: url, image: image))
+        item.setDraggingFrame(bounds, contents: image)
+        beginDraggingSession(with: [item], event: event, source: self)
+        hasStartedDragForCurrentMouseDown = true
+    }
+
+    // MARK: - NSDraggingSource
+
+    // Each destination picks the operation it wants from this set: Finder folders
+    // take .move (Finder relocates the file itself), browsers and chat apps take
+    // .copy (attach / read bytes), and the Dock Trash takes .delete. Note .delete
+    // does NOT trash the file for us — the Trash expects the source to delete its
+    // own data, so we trash it ourselves; see the .delete branch in
+    // handleDragEnded. Only the Trash requests .delete, so allowing it can't cause
+    // deletions anywhere else.
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        [.move, .copy, .delete]
+    }
+
+    func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+        onDragWillBegin?()
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        // Don't clear hasStartedDragForCurrentMouseDown here — that latch is what
+        // keeps a cancelled drag from re-triggering on continued mouse movement.
+        // It clears on the next mouseDown instead. screenPoint is forwarded so
+        // the controller can focus the app that received the drop.
+        onDragEnded?(operation, screenPoint)
+    }
+}
+
+// Provides the screenshot as several pasteboard flavors for a single dragged
+// item. Destinations inspect the *advertised* type list during the hover phase
+// (draggingEntered) before reading any data, so the set must cover every flavor
+// a target might key off:
+// - .fileURL (public.file-url): Finder, Trash, Dock folders.
+// - NSFilenamesPboardType: legacy array-of-paths that Chromium/Safari read for
+//   <input type=file> and attachment drop zones (Gmail, GitHub).
+// - .url (public.url): generic URL checkers (some Dock/app targets).
+// - .png / .tiff: image bytes for chat apps and image-aware drop targets that
+//   only highlight when they see an image flavor.
+private final class ScreenshotDragWriter: NSObject, NSPasteboardWriting {
+    private let url: URL
+    private let image: NSImage
+
+    init(url: URL, image: NSImage) {
+        self.url = url
+        self.image = image
+    }
+
+    func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+        [.fileURL, Self.filenamesPboardType, Self.urlPboardType, .png, .tiff]
+    }
+
+    func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+        switch type {
+        case .fileURL, Self.urlPboardType:
+            url.absoluteString
+        case Self.filenamesPboardType:
+            [url.path]
+        case .png:
+            // Raw file bytes — macOS screenshots are PNG, so this is exact.
+            try? Data(contentsOf: url)
+        case .tiff:
+            image.tiffRepresentation
+        default:
+            nil
+        }
+    }
+
+    private static let filenamesPboardType = NSPasteboard.PasteboardType(rawValue: "NSFilenamesPboardType")
+    private static let urlPboardType = NSPasteboard.PasteboardType(rawValue: "public.url")
+}
+
 @MainActor
 final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     var onComplete: (() -> Void)?
@@ -37,7 +145,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     private let helperLabel: NSTextField
     private let iconView: NSImageView
     private let inputEffectView: NSVisualEffectView
-    private var previewImageView: NSImageView?
+    private var previewImageView: DraggablePreviewImageView?
     private var previewDisplaySize: CGSize?
     private var previewWidthConstraint: NSLayoutConstraint?
     private var previewHeightConstraint: NSLayoutConstraint?
@@ -55,6 +163,11 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     }
     private let trashHintText = "Hit ⌘⌫ again to trash"
     private var allowsFocusLossDismissal = true
+    // Set when the panel closes because the user successfully dragged the
+    // preview onto a drop target. AppCoordinator reads it to skip restoring the
+    // previous app's focus — the user just landed in their drop target (e.g. a
+    // browser) and should stay there.
+    private(set) var closedBySuccessfulDrag = false
     private var isBusy = false
     private var isTrashDeleteArmed = false
     private var isNextTextChangeTheOneThatShowedTrashHint = false
@@ -85,7 +198,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
                 maxPreviewWidth: (screenSize?.visibleFrame.width ?? 1440) - 84,
                 maxPreviewHeight: (screenSize?.visibleFrame.height ?? 900) - 220
             )
-            let imageView = NSImageView()
+            let imageView = DraggablePreviewImageView()
             imageView.image = NSImage(contentsOf: fileURL)
             imageView.imageAlignment = .alignCenter
             imageView.imageScaling = .scaleProportionallyUpOrDown
@@ -93,6 +206,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
             imageView.wantsLayer = true
             imageView.layer?.cornerRadius = 20
             imageView.layer?.masksToBounds = true
+            imageView.fileURL = fileURL
             previewImageView = imageView
             previewDisplaySize = fittedSize
         } else {
@@ -130,6 +244,15 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         panel.animationBehavior = .utilityWindow
 
         super.init(window: panel)
+
+        // Wire the preview drag callbacks here (not during view creation) so the
+        // [weak self] capture happens after super.init, when self is valid.
+        previewImageView?.onDragWillBegin = { [weak self] in
+            self?.handleDragWillBegin()
+        }
+        previewImageView?.onDragEnded = { [weak self] operation, screenPoint in
+            self?.handleDragEnded(operation: operation, screenPoint: screenPoint)
+        }
 
         panel.onModifiedReturn = { [weak self] flags in
             guard let self, self.window?.isVisible == true, !self.isBusy else { return false }
@@ -301,6 +424,7 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         )
 
         previewDisplaySize = newFittedSize
+        previewImageView?.fileURL = url
         previewImageView?.image = NSImage(contentsOf: url)
         previewWidthConstraint?.constant = newFittedSize.width
         previewHeightConstraint?.constant = newFittedSize.height
@@ -356,6 +480,64 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
     }
 
     func dismissAfterSuccess() {
+        allowsFocusLossDismissal = false
+        close()
+    }
+
+    // MARK: - Preview Drag
+
+    private func handleDragWillBegin() {
+        // Suppress focus-loss dismissal for the whole drag. Dropping over another
+        // app deactivates us, and without this guard windowDidResignKey/
+        // appDidDeactivate would close the panel before the drag-end callback can
+        // restore it. The panel is hidden (alpha 0) regardless, so this costs no
+        // screen space — it only stops focus loss from deciding the panel's fate
+        // mid-gesture. Dismissal is re-armed in restorePanelFromDrag, or the
+        // panel is closed outright in closeAfterSuccessfulDrag.
+        allowsFocusLossDismissal = false
+        window?.alphaValue = 0
+    }
+
+    private func handleDragEnded(operation: NSDragOperation, screenPoint: NSPoint) {
+        if operation.isEmpty {
+            // Cancelled (Esc) or dropped where nothing accepted it — bring it back.
+            restorePanelFromDrag()
+        } else if operation.contains(.delete) {
+            // Trash path. Unlike .move (where the destination relocates the file),
+            // .delete means the SOURCE must delete its own data — the Dock Trash
+            // won't move a file owned by another app, it just signals "delete it."
+            // So we trash it ourselves, reusing the ⌘⌫ path. dismissAfterSuccess
+            // (not closeAfterSuccessfulDrag) restores the previous app, matching
+            // ⌘⌫-to-Trash: there's no useful app to focus for a Dock drop.
+            dismissAfterSuccess()
+            trash?(fileURL)
+        } else {
+            closeAfterSuccessfulDrag()
+            // Without this our app stays frontmost after closing the panel (it has
+            // no window left), stranding the user away from where they just
+            // dropped. Activate the app under the drop point so they land there.
+            Self.activateDropTarget(at: screenPoint)
+        }
+    }
+
+    private func restorePanelFromDrag() {
+        window?.alphaValue = 1
+        // If the failed drop was over another app, reassert ourselves so the
+        // panel returns focused and ready, not stranded behind that app.
+        if !NSApp.isActive {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        window?.makeKeyAndOrderFront(nil)
+        // Re-arm dismissal after a beat so the activation/drop churn from the
+        // just-ended drag drains first; otherwise a late resign-key/deactivate
+        // could immediately close the panel we just brought back.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.allowsFocusLossDismissal = true
+        }
+    }
+
+    private func closeAfterSuccessfulDrag() {
+        closedBySuccessfulDrag = true
         allowsFocusLossDismissal = false
         close()
     }
@@ -629,5 +811,46 @@ final class RenamePanelController: NSWindowController, NSWindowDelegate, NSTextF
         return NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) })
             ?? NSScreen.main
             ?? NSScreen.screens.first
+    }
+
+    // MARK: - Drop Target
+
+    private static func activateDropTarget(at screenPoint: NSPoint) {
+        guard let app = runningApplication(atScreenPoint: screenPoint) else { return }
+        app.activate(options: [])
+    }
+
+    // Finds the frontmost app (other than ourselves) whose window is under the
+    // given screen point — i.e. the app the user just dropped onto. screenPoint
+    // is in AppKit global coordinates (origin at the bottom-left of the main
+    // screen); the CG window list uses a top-left origin, so the Y is flipped.
+    private static func runningApplication(atScreenPoint point: NSPoint) -> NSRunningApplication? {
+        let mainScreenHeight = NSScreen.screens.first?.frame.height
+            ?? CGFloat(CGDisplayPixelsHigh(CGMainDisplayID()))
+        let cgPoint = CGPoint(x: point.x, y: mainScreenHeight - point.y)
+        let ourPID = ProcessInfo.processInfo.processIdentifier
+
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return nil
+        }
+
+        for info in windowList {
+            guard let pidNumber = info[kCGWindowOwnerPID as String] as? NSNumber,
+                  pidNumber.int32Value != ourPID,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let x = bounds["X"] as? CGFloat,
+                  let y = bounds["Y"] as? CGFloat,
+                  let w = bounds["Width"] as? CGFloat,
+                  let h = bounds["Height"] as? CGFloat,
+                  let app = NSRunningApplication(processIdentifier: pidNumber.int32Value) else {
+                continue
+            }
+            if CGRect(x: x, y: y, width: w, height: h).contains(cgPoint) {
+                return app
+            }
+        }
+        return nil
     }
 }

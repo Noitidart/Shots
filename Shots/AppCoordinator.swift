@@ -126,8 +126,13 @@ final class AppCoordinator {
             }
 
             let panel = RenamePanelController(fileURL: url)
-            panel.onComplete = { [weak self] in
+            panel.onComplete = { [weak self, weak panel] in
+                // A successful preview drag already moved the user to their drop
+                // target (browser/Finder); don't yank focus back to whatever was
+                // frontmost before the panel opened.
+                let skipFocusRestore = panel?.closedBySuccessfulDrag == true
                 self?.renamePanelController = nil
+                guard !skipFocusRestore else { return }
                 self?.restorePreviousAppFocus()
             }
             // Fire-and-forget: once the panel closes, it cannot both dismiss and
