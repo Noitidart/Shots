@@ -4,6 +4,19 @@ import AppKit
 final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var getCurrentTarget: (() -> ScreenCaptureTarget?)?
+    // The screenshot target captured when the menu last opened. Every menu-time
+    // read — validation, building, action handlers — uses THIS, never the live
+    // getCurrentTarget. The target can flip to Clipboard mid-open via
+    // ScreenCaptureTargetMonitor's prefs watcher; re-reading the live value would
+    // disagree with validateMenuItem and run folder actions against Clipboard,
+    // tripping trashScreenshotsWithToast's fatalError. So: no getCurrentTarget
+    // fallback, ever.
+    //
+    // Not cleared on close: menu actions kick off background work (e.g. trash)
+    // that outlives the menu, and keeping the last value lets any async
+    // continuation still see the target it was invoked with. It's just refreshed
+    // on the next menuWillOpen.
+    private var lastMenuOpenTarget: ScreenCaptureTarget?
     private var onOpenScreenshot: ((URL) -> Void)?
     private var onMenuWillOpen: (() -> Void)?
     private var onMenuDidClose: (() -> Void)?
@@ -119,7 +132,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     }
 
     @objc private func openScreenshotsFolder() {
-        guard case .directory(let url) = getCurrentTarget?() else { return }
+        guard case .directory(let url) = lastMenuOpenTarget else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -133,7 +146,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
             fatalError("dev-error: scope was nil or wrong type, but menu items always set it to a ScreenshotTrashScope at creation so dev set wrong representedObject")
         }
 
-        guard case .directory(let url) = getCurrentTarget?() else {
+        guard case .directory(let url) = lastMenuOpenTarget else {
             fatalError("dev-error: target is not a folder, but validateMenuItem disables trash items when it isn't so this should have never got called")
         }
 
@@ -194,7 +207,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(openScreenshotsFolder), #selector(trashScreenshotsWithToast(_:)):
-            guard case .directory = getCurrentTarget?() else { return false }
+            guard case .directory = lastMenuOpenTarget else { return false }
             return true
         case #selector(toggleLaunchAtLogin(_:)):
             // Always enabled, but we use this to get live update in case user
@@ -209,10 +222,14 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     // MARK: - Menu Delegate
 
     func menuWillOpen(_ menu: NSMenu) {
+        // Refresh the frozen snapshot — see lastMenuOpenTarget for why we freeze.
+        lastMenuOpenTarget = getCurrentTarget?()
         onMenuWillOpen?()
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        // Intentionally do NOT clear lastMenuOpenTarget: menu actions start
+        // background work that outlives the menu. See lastMenuOpenTarget.
         onMenuDidClose?()
     }
 
@@ -233,7 +250,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     }
 
     private func addRecentSectionItemsIfFolder(_ menu: NSMenu) {
-        guard case .directory(let url) = getCurrentTarget?() else { return }
+        guard case .directory(let url) = lastMenuOpenTarget else { return }
 
         // Early return on failure rather than showing "No screenshots yet"
         // (which would be misleading — the search failed, not that there are no
@@ -284,7 +301,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
     }
 
     private func addTargetInfoItems(_ menu: NSMenu) {
-        guard let target = getCurrentTarget?() else { return }
+        guard let target = lastMenuOpenTarget else { return }
 
         switch target {
         case .directory(let url):
