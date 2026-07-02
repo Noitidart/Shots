@@ -65,7 +65,9 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
 
         let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
         launchAtLoginItem.target = self
-        launchAtLoginItem.state = LaunchAtLoginController.isEnabled ? .on : .off
+        // State is intentionally not set here — validateMenuItem sets it live on every
+        // menu open so the checkmark tracks the real SMAppService status, which can be
+        // changed from System Settings while the app runs.
         menu.addItem(launchAtLoginItem)
 
         menu.addItem(.separator())
@@ -193,6 +195,11 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         switch menuItem.action {
         case #selector(openScreenshotsFolder), #selector(trashScreenshotsWithToast(_:)):
             guard case .directory = getCurrentTarget?() else { return false }
+            return true
+        case #selector(toggleLaunchAtLogin(_:)):
+            // Always enabled, but we use this to get live update in case user
+            // changes it from system settings.
+            menuItem.state = LaunchAtLoginController.isEnabled ? .on : .off
             return true
         default:
             return true
